@@ -6,13 +6,17 @@ on:
       - 'v*'
   workflow_dispatch:
 
+# 1. 添加此环境变量，提前适配 GitHub 强制使用 Node 24 运行 Action 的要求，消除警告
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Get full git history for checking file changes
+          fetch-depth: 0  # 获取完整的 git 历史以检查文件更改
 
       - name: Get previous tag
         id: previoustag
@@ -21,11 +25,13 @@ jobs:
           echo "tag=$(git describe --tags --abbrev=0 HEAD^)" >> $GITHUB_OUTPUT
         continue-on-error: true
 
+      # 2. 将 pnpm/action-setup 从 @v2 升级到 @v4
       - name: Setup pnpm
-        uses: pnpm/action-setup@v2
+        uses: pnpm/action-setup@v4
         with:
           version: 9
 
+      # 3. 保持 node-version 为 '22'，这是满足新版 Wrangler 运行的必要条件
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -54,6 +60,7 @@ jobs:
 
       # Clean up
       - name: Post deployment cleanup
+        if: always() # 建议添加 if: always() 确保即使部署失败也会清理敏感文件
         run: |
           rm -f .env*.*
           rm -f wrangler*.json
