@@ -6,8 +6,8 @@ on:
       - 'v*'
   workflow_dispatch:
 
+# 消除 GitHub Actions 官方关于 Node 20 弃用的黄色警告
 env:
-  # 强制 GitHub Actions 插件使用 Node 24 运行，消除过时警告
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
@@ -16,34 +16,42 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # Get full git history for checking file changes
 
-      # 1. 先设置 Node.js，并确保它是 22
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
+      - name: Get previous tag
+        id: previoustag
+        if: github.event_name == 'push'
+        run: |
+          echo "tag=$(git describe --tags --abbrev=0 HEAD^)" >> $GITHUB_OUTPUT
+        continue-on-error: true
 
-      # 2. 使用 v4 版本的 pnpm setup，它会自动关联上面设置好的 Node 22
+      # 1. 升级到 v4 版本的 pnpm setup
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 9
-          # 这一行很关键：确保 pnpm 使用 setup-node 安装的那个 Node 22
-          run_install: false 
 
-      # 3. 验证环境（如果还报错，看这一步的输出）
-      - name: Verify Environment
+      # 2. 指定外部环境为 Node.js 22
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      # 3. 【终极修复】强制 pnpm 内部也使用 Node 22！
+      # 这可以防止 package.json 或 .npmrc 中潜藏的配置将执行环境降级回 20.20.2
+      - name: Force Node version inside pnpm
         run: |
+          pnpm env use --global 22
+          echo "=== Node Environment Check ==="
           node -v
-          pnpm -v
+          pnpm node -v
 
       - name: Install Dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Run deploy script
         env:
-          # 确保这些 Secret 在 GitHub Repo Settings 中已配置
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PROJECT_NAME: ${{ secrets.PROJECT_NAME }}
@@ -57,11 +65,12 @@ jobs:
           AUTH_GOOGLE_ID: ${{ secrets.AUTH_GOOGLE_ID }}
           AUTH_GOOGLE_SECRET: ${{ secrets.AUTH_GOOGLE_SECRET }}
           AUTH_SECRET: ${{ secrets.AUTH_SECRET }}
-        # 使用 pnpm exec 而不是 dlx，有时可以避免重新下载带来的版本偏差
-        run: pnpm tsx scripts/deploy/index.ts
+        # 使用 pnpm exec 替代 dlx，因为 tsx 应该已安装在依赖中，这能最大程度避免触发环境隔离问题
+        run: pnpm exec tsx scripts/deploy/index.ts
 
+      # Clean up
       - name: Post deployment cleanup
-        if: always()
+        if: always() # 确保就算部署报错也会执行清理，防止机密文件泄漏到缓存中
         run: |
           rm -f .env*.*
           rm -f wrangler*.json
